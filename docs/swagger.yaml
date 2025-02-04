@@ -1,0 +1,116 @@
+definitions:
+  main.DepositRequest:
+    properties:
+      amount:
+        type: number
+      user_id:
+        type: string
+    type: object
+  main.TransferRequest:
+    properties:
+      amount:
+        type: number
+      from_account:
+        type: string
+      to_account:
+        type: string
+    type: object
+  main.WithdrawRequest:
+    properties:
+      amount:
+        type: number
+      user_id:
+        type: string
+    type: object
+info:
+  contact: {}
+paths:
+  /api/push/deposit:
+    post:
+      consumes:
+      - application/json
+      description: Пополняет баланс указанного аккаунта
+      parameters:
+      - description: Данные пополнения
+        in: body
+        name: deposit
+        required: true
+        schema:
+          $ref: '#/definitions/main.DepositRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Пополнение успешно
+          schema:
+            type: string
+        "400":
+          description: Некорректные данные запроса
+          schema:
+            type: string
+        "500":
+          description: Ошибка пополнения счета
+          schema:
+            type: string
+      summary: Пополнение счета
+  /api/push/transfer:
+    post:
+      consumes:
+      - application/json
+      description: Осуществляет перевод средств между счетами
+      parameters:
+      - description: Данные для перевода
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/main.TransferRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Push-уведомление отправлено
+          schema:
+            type: string
+        "400":
+          description: Некорректные данные запроса
+          schema:
+            type: string
+        "500":
+          description: Ошибка перевода
+          schema:
+            type: string
+      summary: Перевод средств
+      tags:
+      - transactions
+  /api/push/withdraw:
+    post:
+      consumes:
+      - application/json
+      description: Позволяет пользователю снять средства со счета
+      parameters:
+      - description: Данные для снятия средств
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/main.WithdrawRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Снятие успешно
+          schema:
+            type: string
+        "400":
+          description: Некорректные данные запроса
+          schema:
+            type: string
+        "500":
+          description: Ошибка снятия средств
+          schema:
+            type: string
+      summary: Снятие средств
+      tags:
+      - accounts
+swagger: "2.0"
