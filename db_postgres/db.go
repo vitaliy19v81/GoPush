@@ -77,7 +77,7 @@ func CreateTransactionsTable(db *sql.DB) error {
 	return nil
 }
 
-// Проверка достаточности баланса
+// CheckSufficientFunds Проверка достаточности баланса
 func (db *DBHandler) CheckSufficientFunds(userID uuid.UUID, amount float64) (bool, error) {
 	var balance float64
 	err := db.DB.QueryRow("SELECT balance FROM accounts WHERE user_id = $1", userID).Scan(&balance)
@@ -97,33 +97,6 @@ func (db *DBHandler) DepositFunds(userID uuid.UUID, amount float64) error {
 	if amount <= 0 {
 		return fmt.Errorf("сумма должна быть положительной")
 	}
-
-	//tx, err := db.DB.Begin()
-	//if err != nil {
-	//	return fmt.Errorf("ошибка при начале транзакции: %v", err)
-	//}
-	//
-	//// Пополняем баланс счета
-	//_, err = tx.Exec("UPDATE accounts SET balance = balance + $1 WHERE id = $2", amount, accountID)
-	//if err != nil {
-	//	tx.Rollback()
-	//	return fmt.Errorf("ошибка при пополнении счета: %v", err)
-	//}
-	//
-	//// Записываем транзакцию депозита
-	//_, err = tx.Exec("INSERT INTO transactions (from_account, to_account, amount, status) VALUES ($1, $2, $3, $4)",
-	//	nil, accountID, amount, "deposit")
-	//if err != nil {
-	//	tx.Rollback()
-	//	return fmt.Errorf("ошибка при записи транзакции депозита: %v", err)
-	//}
-	//
-	//err = tx.Commit()
-	//if err != nil {
-	//	return fmt.Errorf("ошибка при завершении транзакции депозита: %v", err)
-	//}
-	//
-	//return nil
 
 	tx, err := db.DB.Begin()
 	if err != nil {

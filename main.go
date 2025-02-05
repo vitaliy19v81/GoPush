@@ -4,12 +4,16 @@ import (
 	"GoPush/config"
 	"GoPush/db_postgres"
 	_ "GoPush/docs"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	webpush "github.com/SherClockHolmes/webpush-go" // Внешняя библиотека для Web Push
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
+	"time"
+
 	//"github.com/redis/go-redis/v9"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -54,104 +58,52 @@ type PushSubscription struct {
 }
 
 var (
-	generatedCode   string
-	pendingTransfer *TransferRequest
-	subscription    *PushSubscription
+	//generatedCode   string
+	//pendingTransfer *TransferRequest
+	//subscription *PushSubscription
 
 	vapidPublicKey  string
 	vapidPrivateKey string
 )
 
+var (
+	ctx         = context.Background()
+	redisClient *redis.Client
+)
+
 var dbHandler *db_postgres.DBHandler
 
-//var (
-//	redisClient *redis.Client
-//	ctx         = context.Background()
-//)
-//
-//// Подключение к Redis
-//func initRedis() {
-//	redisClient = redis.NewClient(&redis.Options{
-//		Addr:     "localhost:6379", // IP и порт Redis
-//		Password: "",               // Если нет пароля, оставить пустым
-//		DB:       0,                // Использовать 0-ю базу данных
-//	})
-//
-//	// Проверка соединения
-//	_, err := redisClient.Ping(ctx).Result()
-//	if err != nil {
-//		log.Fatalf("Ошибка подключения к Redis: %v", err)
-//	}
-//	log.Println("Подключение к Redis успешно!")
-//}
-//
-//// Функция сохранения данных в Redis
-//func saveToRedis() {
-//	// Записываем generatedCode (обычная строка)
-//	err := redisClient.Set(ctx, "generatedCode", "123456", 10*time.Minute).Err()
-//	if err != nil {
-//		log.Printf("Ошибка сохранения generatedCode в Redis: %v", err)
-//	}
-//
-//	// Записываем pendingTransfer (JSON)
-//	pending := TransferRequest{ID: "TRX123", Amount: 100.50}
-//	pendingJSON, _ := json.Marshal(pending)
-//	err = redisClient.Set(ctx, "pendingTransfer", pendingJSON, 10*time.Minute).Err()
-//	if err != nil {
-//		log.Printf("Ошибка сохранения pendingTransfer в Redis: %v", err)
-//	}
-//
-//	// Записываем subscription (JSON)
-//	sub := PushSubscription{
-//		Endpoint: "https://example.com/endpoint",
-//		Keys: map[string]string{
-//			"p256dh": "key1",
-//			"auth":   "key2",
-//		},
-//	}
-//	subJSON, _ := json.Marshal(sub)
-//	err = redisClient.Set(ctx, "subscription", subJSON, 10*time.Minute).Err()
-//	if err != nil {
-//		log.Printf("Ошибка сохранения subscription в Redis: %v", err)
-//	}
-//}
-//
-//// Функция загрузки данных из Redis
-//func loadFromRedis() {
-//	// Читаем generatedCode
-//	generatedCode, err := redisClient.Get(ctx, "generatedCode").Result()
-//	if errors.Is(err, redis.Nil) {
-//		log.Println("generatedCode не найден в Redis")
-//	} else if err != nil {
-//		log.Printf("Ошибка загрузки generatedCode: %v", err)
-//	} else {
-//		log.Println("Загруженный generatedCode:", generatedCode)
-//	}
-//
-//	// Читаем pendingTransfer
-//	pendingJSON, err := redisClient.Get(ctx, "pendingTransfer").Result()
-//	if errors.Is(err, redis.Nil) {
-//		log.Println("pendingTransfer не найден в Redis")
-//	} else if err != nil {
-//		log.Printf("Ошибка загрузки pendingTransfer: %v", err)
-//	} else {
-//		var pending TransferRequest
-//		json.Unmarshal([]byte(pendingJSON), &pending)
-//		log.Println("Загруженный pendingTransfer:", pending)
-//	}
-//
-//	// Читаем subscription
-//	subJSON, err := redisClient.Get(ctx, "subscription").Result()
-//	if errors.Is(err, redis.Nil) {
-//		log.Println("subscription не найден в Redis")
-//	} else if err != nil {
-//		log.Printf("Ошибка загрузки subscription: %v", err)
-//	} else {
-//		var sub PushSubscription
-//		json.Unmarshal([]byte(subJSON), &sub)
-//		log.Println("Загруженный subscription:", sub)
-//	}
-//}
+// Подключение к Redis
+func initRedis() {
+	redisClient = redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379", // IP и порт Redis
+		Password: "",               // Пароль (если есть)
+		DB:       0,                // Используем 0-ю базу данных
+	})
+
+	// Проверяем подключение
+	_, err := redisClient.Ping(ctx).Result()
+	if err != nil {
+		log.Fatalf("Ошибка подключения к Redis: %v", err)
+	}
+	fmt.Println("✅ Подключение к Redis успешно!")
+}
+
+func storeInRedis(key string, data interface{}, duration time.Duration) error {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return redisClient.Set(ctx, key, jsonData, duration).Err()
+}
+
+func getFromRedis(key string) (string, error) {
+	jsonData, err := redisClient.Get(ctx, key).Result()
+	if err != nil {
+		return "", err
+	}
+	return jsonData, nil
+}
 
 func main() {
 	config.LoadConfig()
@@ -160,9 +112,7 @@ func main() {
 	vapidPublicKey = config.VapidPublicKey
 	vapidPrivateKey = config.VapidPrivateKey
 
-	//initRedis()     // Подключаем Redis
-	//saveToRedis()   // Сохраняем данные в Redis
-	//loadFromRedis() // Читаем данные из Redis
+	initRedis() // Подключаем Redis
 
 	var err error
 	// Подключение к базе данных
@@ -276,8 +226,17 @@ func subscribeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subscription = &sub
-	log.Printf("Подписка сохранена: %+v", subscription)
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//subscription = &sub
+	err := storeInRedis("user_subscription", sub, 5*time.Minute)
+	if err != nil {
+		log.Printf("Ошибка сохранения подписки в Redis: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	log.Printf("Подписка сохранена")
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -378,16 +337,53 @@ func transferHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pendingTransfer = &transfer
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//pendingTransfer = &transfer
+	err := storeInRedis("user_transfer", transfer, 5*time.Minute)
+	if err != nil {
+		log.Printf("Ошибка сохранения перевода в Redis: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	n, _ := rand.Int(rand.Reader, big.NewInt(1000000))
-	generatedCode = fmt.Sprintf("%06d", n.Int64())
+	generatedCode := fmt.Sprintf("%06d", n.Int64())
 	log.Printf("Сгенерированный код подтверждения: %s", generatedCode)
 
+	// Подготовка данных в формате JSON
+	data := map[string]string{"code": generatedCode}
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	err = storeInRedis("generated_code", data, 5*time.Minute)
+	if err != nil {
+		log.Printf("Ошибка сохранения кода в Redis: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	jsonSubscription, err := getFromRedis("user_subscription")
+	if err != nil {
+		log.Printf("Ошибка при получении подписки из Redis: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	var subscription PushSubscription
+	err = json.Unmarshal([]byte(jsonSubscription), &subscription)
+	if err != nil {
+		log.Printf("Ошибка при десериализации данных: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+
 	// Отправка push-уведомления
-	if subscription != nil {
+	if subscription.Endpoint != "" {
 		notification := fmt.Sprintf("Ваш код подтверждения: %s", generatedCode)
-		sendPushNotification(subscription, notification)
+		sendPushNotification(&subscription, notification)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Push-уведомление отправлено"))
 	} else {
@@ -408,10 +404,52 @@ func confirmHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if confirmation.Code == generatedCode && pendingTransfer != nil {
-		log.Printf("Информация: %v", pendingTransfer)
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	jsonCode, err := getFromRedis("generated_code")
+	if err != nil {
+		log.Printf("Ошибка при получении кода из redis: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	// Распаковка JSON в карту
+	var result map[string]string
+	err = json.Unmarshal([]byte(jsonCode), &result)
+	if err != nil {
+		log.Printf("Ошибка при десериализации данных из Redis: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+
+	// Извлечение значения по ключу "code"
+	generatedCode, exists := result["code"]
+	if !exists {
+		log.Println("Ключ 'code' не найден в Redis")
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	jsonTransfer, err := getFromRedis("user_transfer")
+	if err != nil {
+		log.Printf("Ошибка при получении перевода из Redis: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	var pendingTransfer TransferRequest
+	err = json.Unmarshal([]byte(jsonTransfer), &pendingTransfer)
+	if err != nil {
+		log.Printf("Ошибка при десериализации данных: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+
+	if confirmation.Code == generatedCode && pendingTransfer.Amount != 0 {
 		// Вызов функции для выполнения транзакции
-		err := executeTransaction(pendingTransfer)
+		err := executeTransaction(&pendingTransfer)
 		if err != nil {
 			log.Printf("Ошибка при выполнении перевода: %v", err)
 			http.Error(w, "Ошибка при выполнении перевода", http.StatusInternalServerError)
@@ -421,7 +459,7 @@ func confirmHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Перевод успешно выполнен: %v", pendingTransfer)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Перевод успешно выполнен"))
-		pendingTransfer = nil
+		//pendingTransfer = nil
 	} else {
 		http.Error(w, "Неверный код подтверждения", http.StatusUnauthorized)
 	}
@@ -523,230 +561,3 @@ func executeTransaction(transfer *TransferRequest) error {
 //
 //log.Println("Сервер запущен на http://localhost:8083")
 //log.Fatal(http.ListenAndServe(":8083", handler))
-
-////package main
-////
-////import (
-////	"encoding/json"
-////	"log"
-////	"net/http"
-////)
-////
-////func formHandler(w http.ResponseWriter, r *http.Request) {
-////	http.ServeFile(w, r, "static/transfer_form.html")
-////}
-////
-////func pushInputHandler(w http.ResponseWriter, r *http.Request) {
-////	http.ServeFile(w, r, "static/push_input.html")
-////}
-////
-////func subscribeHandler(w http.ResponseWriter, r *http.Request) {
-////	var sub PushSubscription
-////	err := json.NewDecoder(r.Body).Decode(&sub)
-////	if err != nil {
-////		http.Error(w, "Invalid subscription", http.StatusBadRequest)
-////		return
-////	}
-////	// Тут должна быть логика сохранения подписки в базе данных или другом хранилище
-////	log.Printf("Subscription saved: %+v\n", sub)
-////	w.WriteHeader(http.StatusOK)
-////}
-////
-////func transferHandler(w http.ResponseWriter, r *http.Request) {
-////	if r.Method == "POST" {
-////		var data TransferRequest
-////		err := json.NewDecoder(r.Body).Decode(&data)
-////		if err != nil {
-////			http.Error(w, "Invalid request body", http.StatusBadRequest)
-////			return
-////		}
-////
-////		// Логика обработки перевода
-////
-////		// Отправка уведомления через push
-////		sendPushNotification(data)
-////		w.WriteHeader(http.StatusOK)
-////	}
-////}
-////
-////func sendPushNotification(data TransferRequest) {
-////	// Тут логика отправки push уведомления
-////	// Например, можно использовать библиотеку для работы с Web Push
-////	log.Println("Sending push notification:", data)
-////}
-////
-////func main() {
-////	http.HandleFunc("/", formHandler)
-////	http.HandleFunc("/push_input", pushInputHandler)
-////	http.HandleFunc("/api/subscribe", subscribeHandler)
-////	http.HandleFunc("/api/transfer", transferHandler)
-////
-////	log.Println("Server started on :8080")
-////	http.ListenAndServe(":8080", nil)
-////}
-//
-////type PushSubscription struct {
-////	Endpoint string `json:"endpoint"`
-////	Keys     struct {
-////		Auth   string `json:"auth"`
-////		P256dh string `json:"p256dh"`
-////	} `json:"keys"`
-////}
-////
-////type TransferRequest struct {
-////	FromAccount string  `json:"from_account"`
-////	ToAccount   string  `json:"to_account"`
-////	Amount      float64 `json:"amount"`
-////}
-//
-//package main
-//
-//import (
-//	"encoding/json"
-//	"fmt"
-//	"log"
-//	"math/rand"
-//	"net/http"
-//	_ "strconv"
-//	"time"
-//
-//	webpush "github.com/SherClockHolmes/webpush-go" // Внешняя библиотека для Web Push
-//)
-//
-//type TransferRequest struct {
-//	FromAccount string  `json:"from_account"`
-//	ToAccount   string  `json:"to_account"`
-//	Amount      float64 `json:"amount"`
-//}
-//
-//type ConfirmationRequest struct {
-//	Code string `json:"code"`
-//}
-//
-//type PushSubscription struct {
-//	Endpoint string            `json:"endpoint"`
-//	Keys     map[string]string `json:"keys"`
-//}
-//
-//var (
-//	generatedCode   string
-//	pendingTransfer *TransferRequest
-//	subscription    *PushSubscription
-//	vapidPublicKey  = "BI2izS49Rqe339JP7w4qS214CbUusG2VCbIhSStOtFBj7Va-GFi0kGfv21_A8cS1OASvib8GdbIlBs1ZJYc9JVw"
-//	vapidPrivateKey = "epgdmo6gxfcxxuQZ2PiLziudajnBu5jGEDBqm_GGtZE"
-//)
-//
-//func main() {
-//	http.HandleFunc("/", formHandler)
-//	http.HandleFunc("/api/transfer", transferHandler)
-//	http.HandleFunc("/api/confirm", confirmHandler)
-//	http.HandleFunc("/api/subscribe", subscribeHandler)
-//	http.HandleFunc("/push_input", func(w http.ResponseWriter, r *http.Request) {
-//		http.ServeFile(w, r, "static/push_input.html")
-//	})
-//	http.Handle("/sw.js", http.StripPrefix("/", http.FileServer(http.Dir("static"))))
-//	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-//
-//	log.Println("Server running on http://localhost:8080")
-//	log.Fatal(http.ListenAndServe(":8080", nil))
-//}
-//
-//// Отображение начальной формы
-//func formHandler(w http.ResponseWriter, r *http.Request) {
-//	http.ServeFile(w, r, "static/transfer_form.html")
-//}
-//
-//// Сохранение подписки пользователя
-//func subscribeHandler(w http.ResponseWriter, r *http.Request) {
-//	if r.Method != http.MethodPost {
-//		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-//		return
-//	}
-//
-//	var sub PushSubscription
-//	if err := json.NewDecoder(r.Body).Decode(&sub); err != nil {
-//		http.Error(w, "Invalid subscription data", http.StatusBadRequest)
-//		return
-//	}
-//
-//	subscription = &sub
-//	log.Printf("Subscription saved: %+v", subscription)
-//	w.WriteHeader(http.StatusOK)
-//}
-//
-//// Обработка запроса на перевод
-//func transferHandler(w http.ResponseWriter, r *http.Request) {
-//	if r.Method != http.MethodPost {
-//		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-//		return
-//	}
-//
-//	var transfer TransferRequest
-//	if err := json.NewDecoder(r.Body).Decode(&transfer); err != nil {
-//		http.Error(w, "Invalid request data", http.StatusBadRequest)
-//		return
-//	}
-//
-//	pendingTransfer = &transfer
-//
-//	// Генерация 6-значного кода
-//	rand.Seed(time.Now().UnixNano())
-//	generatedCode = fmt.Sprintf("%06d", rand.Intn(1000000))
-//	log.Printf("Generated code: %s", generatedCode)
-//
-//	// Отправка push-уведомления
-//	if subscription != nil {
-//		notification := fmt.Sprintf("Your confirmation code is: %s", generatedCode)
-//		sendPushNotification(subscription, notification)
-//		w.WriteHeader(http.StatusOK)
-//		w.Write([]byte("Push notification sent"))
-//	} else {
-//		http.Error(w, "No subscription found", http.StatusBadRequest)
-//	}
-//}
-//
-//// Подтверждение перевода
-//func confirmHandler(w http.ResponseWriter, r *http.Request) {
-//	if r.Method != http.MethodPost {
-//		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-//		return
-//	}
-//
-//	var confirmation ConfirmationRequest
-//	if err := json.NewDecoder(r.Body).Decode(&confirmation); err != nil {
-//		http.Error(w, "Invalid request data", http.StatusBadRequest)
-//		return
-//	}
-//
-//	if confirmation.Code == generatedCode && pendingTransfer != nil {
-//		log.Printf("Transfer successful: %v", pendingTransfer)
-//		w.WriteHeader(http.StatusOK)
-//		w.Write([]byte("Transfer successful"))
-//		pendingTransfer = nil
-//	} else {
-//		http.Error(w, "Invalid code", http.StatusUnauthorized)
-//	}
-//}
-//
-//// Отправка push-уведомления
-//func sendPushNotification(sub *PushSubscription, message string) {
-//	// Создаем уведомление
-//	resp, err := webpush.SendNotification([]byte(message), &webpush.Subscription{
-//		Endpoint: sub.Endpoint,
-//		Keys: webpush.Keys{
-//			P256dh: sub.Keys["p256dh"],
-//			Auth:   sub.Keys["auth"],
-//		},
-//	}, &webpush.Options{
-//		Subscriber:      "mailto:example@yourdomain.com",
-//		VAPIDPublicKey:  vapidPublicKey,
-//		VAPIDPrivateKey: vapidPrivateKey,
-//		TTL:             30,
-//	})
-//	if err != nil {
-//		log.Printf("Error sending push notification: %v", err)
-//		return
-//	}
-//	defer resp.Body.Close()
-//	log.Println("Push notification sent successfully")
-//}
